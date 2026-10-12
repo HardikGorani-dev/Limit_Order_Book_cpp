@@ -1,0 +1,26 @@
+# Build directories
+build/
+cmake-build-*/
+
+# Compiled binaries and object files
+*.exe
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.so
+
+# Debug and profiling output
+*.pdb
+*.prof
+*.gcda
+*.gcno
+
+# IDE and editor files
+.vscode/
+.idea/
+
+# OS-generated files
+.DS_Store
+Thumbs.db
