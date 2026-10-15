@@ -145,7 +145,7 @@ TEST_F(OrderBookTest, Reduce_ZeroQty_Ignored) {
     EXPECT_FALSE(book.reduce(1, 0));
 }
 
-TEST_F(OrderBookTest, Reduce_OverQty_ActsAsCancel) {
+TEST_F(OrderBookTest, Reduce_OverQty_Rejected) {
     book.insert({1, 100, 10, Side::sell});
     
     // Over-reduce must be rejected and return false, leaving order intact
@@ -215,4 +215,52 @@ TEST_F(OrderBookTest, Cancel_BidSide) {
     
     book.process_aggressive_order({2, 100, 10, Side::sell}, trades);
     EXPECT_TRUE(trades.empty()); 
+}
+
+TEST_F(OrderBookTest, FifoPriority_SellAggressor) {
+    book.insert({1, 100, 10, Side::buy});
+    book.insert({2, 100, 15, Side::buy});
+    
+    book.process_aggressive_order({3, 100, 15, Side::sell}, trades);
+    
+    ASSERT_EQ(trades.size(), 2);
+    // Matches first-in (Order 1) fully, then takes 5 from Order 2
+    EXPECT_EQ(trades[0].Buyer_id, 1);
+    EXPECT_EQ(trades[0].Quantity, 10);
+    EXPECT_EQ(trades[1].Buyer_id, 2);
+    EXPECT_EQ(trades[1].Quantity, 5);
+}
+
+TEST_F(OrderBookTest, Reduce_ExactQuantity_RemovesOrder) {
+    book.insert({1, 100, 10, Side::sell});
+    
+    EXPECT_TRUE(book.reduce(1, 10)); 
+    
+    book.process_aggressive_order({2, 100, 10, Side::buy}, trades);
+    EXPECT_TRUE(trades.empty()); 
+}
+
+TEST_F(OrderBookTest, Reduce_Partial_UpdatesQuantity) {
+    book.insert({1, 100, 20, Side::sell});
+    
+    EXPECT_TRUE(book.reduce(1, 5)); // Decrease BY 5, leaving 15
+    
+    book.process_aggressive_order({2, 100, 20, Side::buy}, trades);
+    
+    ASSERT_EQ(trades.size(), 1);
+    EXPECT_EQ(trades[0].Quantity, 15); // The trade must be for exactly the remaining 15
+}
+
+TEST_F(OrderBookTest, Cancel_MiddleOrder) {
+    book.insert({1, 100, 10, Side::sell});
+    book.insert({2, 100, 10, Side::sell}); // The target
+    book.insert({3, 100, 10, Side::sell});
+    
+    EXPECT_TRUE(book.cancel(2)); 
+    
+    book.process_aggressive_order({4, 100, 20, Side::buy}, trades);
+    
+    ASSERT_EQ(trades.size(), 2);
+    EXPECT_EQ(trades[0].Seller_id, 1);
+    EXPECT_EQ(trades[1].Seller_id, 3);
 }
