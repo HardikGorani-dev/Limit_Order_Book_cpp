@@ -1,9 +1,14 @@
-
 cmake_minimum_required(VERSION 3.20)
 project(LimitOrderBook VERSION 1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose Release or Debug" FORCE)
+endif()
+
+option(WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 
 add_library(lob_core src/OrderBook.cpp)
 
@@ -12,17 +17,26 @@ target_include_directories(lob_core PUBLIC
 )
 
 if (MSVC)
-    target_compile_options(lob_core PRIVATE /W4 /WX)
+    target_compile_options(lob_core PRIVATE /W4)
+    if(WARNINGS_AS_ERRORS)
+        target_compile_options(lob_core PRIVATE /WX)
+    endif()
 else()
     target_compile_options(lob_core PRIVATE 
-        -Wall -Wextra -Wpedantic -Werror 
-        
-        -fno-omit-frame-pointer
+        -Wall -Wextra -Wpedantic -fno-omit-frame-pointer
     )
-  endif()
+    if(WARNINGS_AS_ERRORS)
+        target_compile_options(lob_core PRIVATE -Werror)
+    endif()
+    
+    if(CMAKE_BUILD_TYPE STREQUAL "Release")
+        target_compile_options(lob_core PRIVATE -O3 -march=native)
+    endif()
+endif()
 
 enable_testing()
 add_subdirectory(tests)
+
 add_executable(lob_benchmark benchmarks/benchmark.cpp)
 target_link_libraries(lob_benchmark PRIVATE lob_core)
 if (NOT MSVC)
