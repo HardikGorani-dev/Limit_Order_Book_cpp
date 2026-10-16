@@ -16,3 +16,6 @@ target_link_libraries(lob_test PRIVATE
 
 include(GoogleTest)
 gtest_discover_tests(lob_test)
+
+add_executable(fuzz_orderbook fuzz_orderbook.cpp)
+target_link_libraries(fuzz_orderbook PRIVATE lob_core)
