@@ -1,4 +1,4 @@
-name: CI
+﻿name: CI
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
         run: |
           EXTRA_FLAGS=""
           if [ "${{ matrix.build_type }}" = "Debug" ]; then
-            EXTRA_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g"
+            EXTRA_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g"
           fi
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
