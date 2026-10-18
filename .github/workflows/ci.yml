@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - { cc: gcc, cxx: g++ }
+          - { cc: clang, cxx: clang++ }
+        build_type: [ Release, Debug ]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure CMake
+        env:
+          CC: ${{ matrix.compiler.cc }}
+          CXX: ${{ matrix.compiler.cxx }}
+        run: |
+          EXTRA_FLAGS=""
+          if [ "${{ matrix.build_type }}" = "Debug" ]; then
+            EXTRA_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g"
+          fi
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DWARNINGS_AS_ERRORS=ON \
+            -DCMAKE_CXX_FLAGS="${EXTRA_FLAGS}"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Run Unit Tests & 1M Fuzz Smoke Test
+        run: ctest --test-dir build --output-on-failure

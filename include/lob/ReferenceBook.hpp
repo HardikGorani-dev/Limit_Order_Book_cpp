@@ -1,7 +1,9 @@
 #pragma once
 #include "OrderBook.hpp"
-#include "algorithm"
-#include "vector"
+#include <algorithm>
+#include <vector>
+#include <cstddef>
+#include <cstdint>
 
 class ReferenceBook {
 private:
@@ -38,10 +40,10 @@ public:
         for (auto it = active_orders.begin(); it != active_orders.end(); ++it) {
             if (it->id == id) {
                 if (decrease_by> it->Quantity){
-                    return false;
+                    return false;  // over Reduce is strictly rejected
                 }
                 if (decrease_by == it->Quantity) {
-                    active_orders.erase(it); // Over-reduce acts as cancel
+                    active_orders.erase(it); // Exact Reduce removes the order
                 } else {
                     it->Quantity -= decrease_by;
                 }
@@ -101,7 +103,39 @@ public:
     }
 
     InvariantError check_invariants() const { return InvariantError::none; }
+
+    size_t size() const { return active_orders.size();}
+
+    bool has_id(uint64_t id) const {
+        for (const auto& o : active_orders) {
+            if (o.id == id) return true;
+        }
+        return false;
+    }
+
+    uint64_t id_at(size_t index) const { return active_orders[index].id; }
+
+    // Returns true if `id` is resting and is NOT the front (oldest seq) order at its price level
+    bool is_non_front(uint64_t id) const {
+        const RefOrder* target = nullptr;
+        for (const auto& o : active_orders) {
+            if (o.id == id) {
+                target = &o;
+                break;
+            }
+        }
+        if (!target) return false;
+
+        for (const auto& o : active_orders) {
+            if (o.side == target->side && o.Price == target->Price && o.seq < target->seq) {
+                return true;
+            }
+        }
+        return false;
+    }
 };
+
+
 
 
 

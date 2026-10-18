@@ -1,18 +1,16 @@
-# High-Performance Limit Order Book (C++20)
+# C++20 Limit Order Book & Matching Engine
 
-A low-latency Limit Order Book (LOB) matching engine built in modern C++20. 
+[![CI](https://github.com/HardikGorani-dev/Limit_Order_Book_cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/HardikGorani-dev/Limit_Order_Book_cpp/actions/workflows/ci.yml)
 
-This project is currently in **Phase 3** of development, establishing the baseline performance using standard STL containers (`std::map`, `std::list`). Subsequent phases will replace standard containers with a custom intrusive memory pool and cache-aligned contiguous data structures to eliminate heap allocations on the critical path.
+A price-time priority (FIFO) financial limit order book and matching engine written in standard C++20.
 
-## Architecture (Baseline)
-* **Matching Engine:** Price-time priority matching.
-* **Containers:** `std::map` for price levels, `std::list` for order queues.
-* **Order Index:** `std::unordered_map` for O(1) cancel/reduce lookups.
+**Current Status:** Core STL baseline engine, 24-case typed specification suite, 10M-operation differential fuzzer against a flat-vector reference model, and per-operation latency/allocation benchmark harness are complete. Intrusive slab memory pool integration is in progress.
 
+---
 
+## Build, Test, and Run
 
-### Benchmark Environment
-* **OS:** Windows 11 (x86_64)
-* **Compiler:** GCC 15.2.0 (MinGW)
-* **Optimization:** `-O3 -fno-omit-frame-pointer`
-* **Thread Affinity:** Unpinned (OS scheduled)
+### 1. Build (Release Default)
+```bash
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
