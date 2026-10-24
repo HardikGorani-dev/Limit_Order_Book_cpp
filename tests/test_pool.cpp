@@ -16,15 +16,22 @@ struct alignas(64) CacheAlignedSlot {
     uint64_t y;
 };
 
+struct TrackedNonTrivial {
+    int* dtor_count;
+    uint64_t payload;
+    TrackedNonTrivial(int* counter, uint64_t v) : dtor_count(counter), payload(v) {}
+    ~TrackedNonTrivial() { ++(*dtor_count); }
+};
+
 } // namespace
 
 // 1. LIFO reuse and 32-bit handle round-trip (index_of / at)
 TEST(MemoryPoolTest, LifoReuseAndHandles) {
-    pool<TestSlot, 4> p;
+    MemoryPool<TestSlot, 4> p;
 
-    TestSlot* s0 = p.my_alloc(1ULL, 2ULL, 3ULL);
-    TestSlot* s1 = p.my_alloc(4ULL, 5ULL, 6ULL);
-    TestSlot* s2 = p.my_alloc(7ULL, 8ULL, 9ULL);
+    TestSlot* s0 = p.allocate(1ULL, 2ULL, 3ULL);
+    TestSlot* s1 = p.allocate(4ULL, 5ULL, 6ULL);
+    TestSlot* s2 = p.allocate(7ULL, 8ULL, 9ULL);
 
     ASSERT_NE(s0, nullptr);
     ASSERT_NE(s1, nullptr);
@@ -37,58 +44,67 @@ TEST(MemoryPoolTest, LifoReuseAndHandles) {
     EXPECT_EQ(p.at(idx1), s1);
 
     // Free s1 then s0; LIFO free list must return s0 on the next alloc, then s1
-    p.my_free(s1);
-    p.my_free(s0);
+    p.free(s1);
+    p.free(s0);
     EXPECT_EQ(p.live_count(), 1u);
 
-    TestSlot* r0 = p.my_alloc(10ULL, 20ULL, 30ULL);
-    TestSlot* r1 = p.my_alloc(40ULL, 50ULL, 60ULL);
+    TestSlot* r0 = p.allocate(10ULL, 20ULL, 30ULL);
+    TestSlot* r1 = p.allocate(40ULL, 50ULL, 60ULL);
     EXPECT_EQ(r0, s0);
     EXPECT_EQ(r1, s1);
     EXPECT_EQ(p.index_of(r0), idx0);
     EXPECT_EQ(p.index_of(r1), idx1);
 }
 
-// 2. Exhaustion returns nullptr and recovers after my_free
+// 2. Exhaustion returns nullptr and recovers after free
 TEST(MemoryPoolTest, ExhaustionReturnsNullptr) {
-    pool<TestSlot, 3> p;
+    MemoryPool<TestSlot, 3> p;
 
-    TestSlot* a = p.my_alloc(1ULL, 1ULL, 1ULL);
-    TestSlot* b = p.my_alloc(2ULL, 2ULL, 2ULL);
-    TestSlot* c = p.my_alloc(3ULL, 3ULL, 3ULL);
+    TestSlot* a = p.allocate(1ULL, 1ULL, 1ULL);
+    TestSlot* b = p.allocate(2ULL, 2ULL, 2ULL);
+    TestSlot* c = p.allocate(3ULL, 3ULL, 3ULL);
     ASSERT_NE(a, nullptr);
     ASSERT_NE(b, nullptr);
     ASSERT_NE(c, nullptr);
     EXPECT_EQ(p.live_count(), 3u);
 
     // Pool is full
-    EXPECT_EQ(p.my_alloc(4ULL, 4ULL, 4ULL), nullptr);
+    EXPECT_EQ(p.allocate(4ULL, 4ULL, 4ULL), nullptr);
     EXPECT_EQ(p.live_count(), 3u);
 
-    // Free one slot and verify my_alloc succeeds again
-    p.my_free(b);
+    // Free one slot and verify allocate succeeds again
+    p.free(b);
     EXPECT_EQ(p.live_count(), 2u);
-    TestSlot* b2 = p.my_alloc(5ULL, 5ULL, 5ULL);
+    TestSlot* b2 = p.allocate(5ULL, 5ULL, 5ULL);
     EXPECT_EQ(b2, b);
     EXPECT_EQ(b2->a, 5ULL);
 }
 
 // 3. Over-aligned types receive properly aligned addresses
 TEST(MemoryPoolTest, AlignmentRespected) {
-    pool<CacheAlignedSlot, 8> p;
-    for (size_t i = 0; i < 8; ++i) {
-        CacheAlignedSlot* slot = p.my_alloc(i, i * 10);
-        ASSERT_NE(slot, nullptr);
-        EXPECT_EQ(reinterpret_cast<uintptr_t>(slot) % alignof(CacheAlignedSlot), 0u);
+    std::vector<std::unique_ptr<char[]>> jitter;
+    std::vector<std::unique_ptr<MemoryPool<CacheAlignedSlot,4>>> pools;
+    
+    for (size_t round = 0; round < 32; ++round) {
+        jitter.push_back(std::make_unique<char[]>((round *13) % 53 + 1));
+        auto pool_ptr = std::make_unique<MemoryPool<CacheAlignedSlot,4>>();
+        for (size_t i = 0; i < 4; i++)
+        {
+            
+            CacheAlignedSlot* slot = pool_ptr->allocate(i,round);
+            ASSERT_NE(slot, nullptr);
+            EXPECT_EQ(reinterpret_cast<uintptr_t>(slot) % alignof(CacheAlignedSlot), 0u);
+        }
+        pools.push_back(std::move(pool_ptr));
     }
 }
 
 // 4. Address stability of live objects across interleaved frees and allocations
 TEST(MemoryPoolTest, AddressStability) {
-    pool<TestSlot, 8> p;
+    MemoryPool<TestSlot, 8> p;
     std::vector<TestSlot*> ptrs;
     for (uint64_t i = 0; i < 8; ++i) {
-        ptrs.push_back(p.my_alloc(i, i + 100, i + 200));
+        ptrs.push_back(p.allocate(i, i + 100, i + 200));
         ASSERT_NE(ptrs.back(), nullptr);
     }
 
@@ -97,11 +113,11 @@ TEST(MemoryPoolTest, AddressStability) {
     uint32_t h1 = p.index_of(anchor1);
     uint32_t h6 = p.index_of(anchor6);
 
-    p.my_free(ptrs[0]);
-    p.my_free(ptrs[2]);
-    p.my_free(ptrs[7]);
-    (void)p.my_alloc(99ULL, 99ULL, 99ULL);
-    (void)p.my_alloc(88ULL, 88ULL, 88ULL);
+    p.free(ptrs[0]);
+    p.free(ptrs[2]);
+    p.free(ptrs[7]);
+    (void)p.allocate(99ULL, 99ULL, 99ULL);
+    (void)p.allocate(88ULL, 88ULL, 88ULL);
 
     EXPECT_EQ(p.at(h1), anchor1);
     EXPECT_EQ(p.at(h6), anchor6);
@@ -111,16 +127,16 @@ TEST(MemoryPoolTest, AddressStability) {
     EXPECT_EQ(anchor6->b, 106ULL);
 }
 
-// 5. Poison-on-my_free (first 8 bytes unpoisoned for Freenode::next; payload poisoned)
+// 5. Poison-on-free (first 8 bytes unpoisoned for Freenode::next; payload poisoned)
 TEST(MemoryPoolTest, UseAfterFreePoisoning) {
-    pool<TestSlot, 4> p;
-    TestSlot* s = p.my_alloc(111ULL, 222ULL, 333ULL);
+    MemoryPool<TestSlot, 4> p;
+    TestSlot* s = p.allocate(111ULL, 222ULL, 333ULL);
     ASSERT_NE(s, nullptr);
     EXPECT_EQ(s->a, 111ULL);
     EXPECT_EQ(s->b, 222ULL);
     EXPECT_EQ(s->c, 333ULL);
 
-    p.my_free(s);
+    p.free(s);
 
 #ifdef LOB_HAS_ASAN
     // First 8 bytes hold Freenode::next and must remain unpoisoned
@@ -130,7 +146,7 @@ TEST(MemoryPoolTest, UseAfterFreePoisoning) {
                   reinterpret_cast<char*>(s) + sizeof(void*),
                   sizeof(TestSlot) - sizeof(void*)),
               nullptr);
-    // Reading poisoned payload after my_free must trigger ASan abort
+    // Reading poisoned payload after free must trigger ASan abort
     EXPECT_DEATH(
         {
             volatile uint64_t bad_read = s->b;
@@ -145,7 +161,7 @@ TEST(MemoryPoolTest, UseAfterFreePoisoning) {
 #endif
 
     // Re-allocating unpoisons the slot so subsequent writes/reads succeed
-    TestSlot* s2 = p.my_alloc(444ULL, 555ULL, 666ULL);
+    TestSlot* s2 = p.allocate(444ULL, 555ULL, 666ULL);
     ASSERT_EQ(s2, s);
 #ifdef LOB_HAS_ASAN
     EXPECT_EQ(__asan_region_is_poisoned(s2, sizeof(TestSlot)), nullptr);
@@ -153,4 +169,14 @@ TEST(MemoryPoolTest, UseAfterFreePoisoning) {
     EXPECT_EQ(s2->a, 444ULL);
     EXPECT_EQ(s2->b, 555ULL);
     EXPECT_EQ(s2->c, 666ULL);
+}
+// 6. Non-trivial destructor runs on free()
+TEST(MemoryPoolTest, DestructorCalledOnFree) {
+    MemoryPool<TrackedNonTrivial, 4> p;
+    int destroyed = 0;
+    TrackedNonTrivial* obj = p.allocate(&destroyed, 42ULL);
+    ASSERT_NE(obj, nullptr);
+    EXPECT_EQ(destroyed, 0);
+    p.free(obj);
+    EXPECT_EQ(destroyed, 1);
 }

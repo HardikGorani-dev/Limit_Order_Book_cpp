@@ -28,11 +28,14 @@
 #define LOB_ASAN_UNPOISON(addr, size) ((void)(addr), (void)(size))
 #endif
 
-/// @brief Fixed-capacity intrusive slab memory pool.
-/// @note ~pool() frees the backing slab without calling ~T() on remaining live objects.
-/// @note If T(...) throws inside my_alloc(), that slot is not returned to the free list.
+/// @brief Fixed-capacity intrusive slab memory MemoryPool.
+/// @note ~MemoryPool() frees the backing slab without calling ~T() on remaining live objects.
+/// @note If T(...) throws inside allocate(), that slot is not returned to the free list.
 template <typename T, size_t capacity>
-class pool {
+class MemoryPool {
+public:
+static constexpr uint32_t INVALID_INDEX = UINT32_MAX;
+
 private:
     struct Freenode {
         Freenode* next;
@@ -40,7 +43,10 @@ private:
 
     // 1. Compile-time invariants
     static_assert(capacity > 0, "Pool capacity must be greater than 0");
+    static_assert(capacity < INVALID_INDEX,"Pool capacity must be < INVALID_INDEX to fit in 32-bit handles");
     static_assert(sizeof(T) >= sizeof(void*), "sizeof(T) must be >= sizeof(void*) to store Freenode*");
+    static_assert(size)
+
 
     // 2. Align slab to the stricter of T's alignment or pointer alignment
     static constexpr size_t Alignment = std::max(alignof(T), alignof(void*));
@@ -62,9 +68,8 @@ private:
     }
 
 public:
-    static constexpr uint32_t INVALID_INDEX = UINT32_MAX;
-
-    explicit pool() {
+   
+    explicit MemoryPool() {
         slab = new (std::align_val_t{Alignment}) std::byte[capacity * sizeof(T)];
         head = reinterpret_cast<Freenode*>(slab);
 
@@ -79,20 +84,20 @@ public:
         poison_free_slot(current);
     }
 
-    ~pool() {
+    ~MemoryPool() {
         // Unpoison before returning memory to the OS allocator so ASan stays clean
         LOB_ASAN_UNPOISON(slab, capacity * sizeof(T));
         ::operator delete[](slab, std::align_val_t{Alignment});
     }
 
     // 3. Delete copy and move to prevent double-free of `slab`
-    pool(const pool&) = delete;
-    pool& operator=(const pool&) = delete;
-    pool(pool&&) = delete;
-    pool& operator=(pool&&) = delete;
+    MemoryPool(const MemoryPool&) = delete;
+    MemoryPool& operator=(const MemoryPool&) = delete;
+    MemoryPool(MemoryPool&&) = delete;
+    MemoryPool& operator=(MemoryPool&&) = delete;
 
     template <typename... Args>
-    T* my_alloc(Args&&... args) {
+    T* allocate(Args&&... args) {
         if (!head) {
             return nullptr;
         }
@@ -105,7 +110,7 @@ public:
         return new (node) T(std::forward<Args>(args)...);
     }
 
-    void my_free(T* ptr) noexcept {
+    void free(T* ptr) noexcept {
         assert(ptr != nullptr && "Cannot free nullptr");
         auto* byte_ptr = reinterpret_cast<std::byte*>(ptr);
         assert(byte_ptr >= slab && byte_ptr < slab + (capacity * sizeof(T)) && "Pointer out of slab bounds");

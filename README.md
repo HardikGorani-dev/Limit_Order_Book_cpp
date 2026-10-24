@@ -1,4 +1,4 @@
-# C++20 Limit Order Book & Matching Engine
+﻿# C++20 Limit Order Book & Matching Engine
 
 [![CI](https://github.com/HardikGorani-dev/Limit_Order_Book_cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/HardikGorani-dev/Limit_Order_Book_cpp/actions/workflows/ci.yml)
 
@@ -89,5 +89,5 @@ Workload: 500,000 operations generated around a random-walk mid-price. Every new
 
 - [x] **STL Baseline Engine:** Price-time priority matching (`std::map`, `std::list`, `std::unordered_map`) with strict invariant verification.
 - [x] **Verification & Differential Fuzzing:** 24-case typed GoogleTest suite, flat-vector `ReferenceBook` oracle, 10M-operation differential fuzzer, and CI with ASan/UBSan.
-- [ ] **Intrusive Slab Memory Pool:** Pre-allocated, cache-aligned fixed-capacity pool with debug slot poisoning to remove the list-node heap allocation (~1 of the `2.08 allocs/op` on resting orders).
+- [x] **Intrusive Slab Memory Pool:** Pre-allocated, cache-aligned fixed-capacity pool with debug slot poisoning to remove the list-node heap allocation (~1 of the `2.08 allocs/op` on resting orders).
 - [ ] **Intrusive Pooled Order Book:** Replace `std::list` order queues with pooled intrusive doubly-linked lists, benchmarking before/after latency and allocation counts.
