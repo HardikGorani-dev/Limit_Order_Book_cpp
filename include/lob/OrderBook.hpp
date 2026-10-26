@@ -41,7 +41,9 @@ enum class InvariantError {
     missing_from_index,
     index_data_mismatch,
     iterator_mismatch,
-    size_mismatch
+    size_mismatch,
+    link_mismatch,
+    pool_live_count_mismatch
 };
 
 class Order_book{

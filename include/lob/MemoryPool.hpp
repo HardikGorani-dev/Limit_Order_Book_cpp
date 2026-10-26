@@ -45,7 +45,7 @@ private:
     static_assert(capacity > 0, "Pool capacity must be greater than 0");
     static_assert(capacity < INVALID_INDEX,"Pool capacity must be < INVALID_INDEX to fit in 32-bit handles");
     static_assert(sizeof(T) >= sizeof(void*), "sizeof(T) must be >= sizeof(void*) to store Freenode*");
-    static_assert(size)
+    static_assert(sizeof(T) % alignof(Freenode) == 0, "sizeof(T) must be a multiple of alignof(Freenode) so every slot is pointer-aligned");
 
 
     // 2. Align slab to the stricter of T's alignment or pointer alignment

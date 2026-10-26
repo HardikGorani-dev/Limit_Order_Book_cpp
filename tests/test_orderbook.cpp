@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <lob/OrderBook.hpp>
 #include <lob/ReferenceBook.hpp>
+#include <lob/PooledOrderBook.hpp>
 
 template<typename T>
 class OrderBookTest : public ::testing::Test {
@@ -14,7 +15,7 @@ protected:
     }
 };
 
-using BookTypes = ::testing::Types<Order_book, ReferenceBook>;
+using BookTypes = ::testing::Types<Order_book, ReferenceBook, PooledOrderBook<4096>>;
 TYPED_TEST_SUITE(OrderBookTest,BookTypes);
 
 // --- MATCHING RULES & PRICE PRIORITY ---
@@ -268,4 +269,20 @@ TYPED_TEST(OrderBookTest, Cancel_MiddleOrder) {
     ASSERT_EQ(this->trades.size(), 2);
     EXPECT_EQ(this->trades[0].Seller_id, 1);
     EXPECT_EQ(this->trades[1].Seller_id, 3);
+}
+
+TEST(PooledOrderBookExhaustionTest, ReturnsFalseWhenPoolExhaustedAndRecoversAfterCancel) {
+    PooledOrderBook<3> book;
+    EXPECT_TRUE(book.insert({1, 100, 10, Side::buy}));
+    EXPECT_TRUE(book.insert({2, 100, 20, Side::buy}));
+    EXPECT_TRUE(book.insert({3, 101, 30, Side::sell}));
+
+    // Pool of capacity 3 is now full; 4th passive insert must return false
+    EXPECT_FALSE(book.insert({4, 100, 15, Side::buy}));
+    EXPECT_EQ(book.check_invariants(), InvariantError::none);
+
+    // Cancel one order to free a slot, then verify insert succeeds
+    EXPECT_TRUE(book.cancel(2));
+    EXPECT_TRUE(book.insert({4, 100, 15, Side::buy}));
+    EXPECT_EQ(book.check_invariants(), InvariantError::none);
 }

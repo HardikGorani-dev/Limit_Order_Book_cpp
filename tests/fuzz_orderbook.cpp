@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <lob/OrderBook.hpp>
 #include <lob/ReferenceBook.hpp>
+#include <lob/PooledOrderBook.hpp>
 
 enum class OpType {INSERT, CANCEL, REDUCE, AGGRESSIVE};
 
@@ -54,6 +55,7 @@ int main(int argc, char** argv) {
 
     Order_book opt_book;
     ReferenceBook ref_book;
+    PooledOrderBook<4096> pool_book;
     std::deque<OpRecord> history;
 
     uint64_t next_id = 1;
@@ -122,87 +124,96 @@ int main(int argc, char** argv) {
         history.push_back(op);
         if (history.size() > 50) history.pop_front();
 
-      bool opt_res = false, ref_res = false;
-        std::vector<Trade> opt_trades, ref_trades;
+      bool opt_res = false, pool_res = false, ref_res = false;
+     std::vector<Trade> opt_trades, pool_trades, ref_trades;
 
-        if (type == OpType::INSERT) {
-            bool had_id = ref_book.has_id(op.id);
-            opt_res = opt_book.insert({op.id, op.Price, op.Quantity, op.side});
-            ref_res = ref_book.insert({op.id, op.Price, op.Quantity, op.side});
-            if (opt_res) stats_inserts++;
-            else if (op.Quantity == 0) stats_zero_qty_rejects++;
-            else if (had_id) stats_duplicate_rejects++;
-        } else if (type == OpType::CANCEL) {
-            bool was_non_front = ref_book.is_non_front(op.id);
-            opt_res = opt_book.cancel(op.id);
-            ref_res = ref_book.cancel(op.id);
-            if (opt_res) {
-                stats_cancels++;
-                if (was_non_front) stats_non_front_cancels++;
-            }
-        } else if (type == OpType::REDUCE) {
-            opt_res = opt_book.reduce(op.id, op.Quantity);
-            ref_res = ref_book.reduce(op.id, op.Quantity);
-            if (opt_res) stats_reduces++;
-            else stats_rejected_reduces++;
-        } else if (type == OpType::AGGRESSIVE) {
-            bool had_id = ref_book.has_id(op.id);
-            opt_res = opt_book.process_aggressive_order({op.id, op.Price, op.Quantity, op.side}, opt_trades);
-            ref_res = ref_book.process_aggressive_order({op.id, op.Price, op.Quantity, op.side}, ref_trades);
-            if (opt_res) {
-                stats_aggressive++;
-                stats_trades += opt_trades.size();
-                if (!opt_trades.empty()) {
-                    uint64_t total_traded = 0;
-                    for (const auto& tr : opt_trades) total_traded += tr.Quantity;
-                    uint64_t last_resting_id = (op.side == Side::buy)
-                        ? opt_trades.back().Seller_id
-                        : opt_trades.back().Buyer_id;
-                    if (total_traded < op.Quantity || ref_book.has_id(last_resting_id)) {
-                        stats_partial_fills++;
-                    }
-                    if (opt_trades.size() >= 2 && opt_trades.front().Price != opt_trades.back().Price) {
-                        stats_multi_level_sweeps++;
-                    }
-                }
-            } else if (op.Quantity == 0) {
-                stats_zero_qty_rejects++;
-            } else if (had_id) {
-                stats_duplicate_rejects++;
-            }
-        }
+     if (type == OpType::INSERT) {
+         bool had_id = ref_book.has_id(op.id);
+         opt_res = opt_book.insert({op.id, op.Price, op.Quantity, op.side});
+         pool_res = pool_book.insert({op.id, op.Price, op.Quantity, op.side});
+         ref_res = ref_book.insert({op.id, op.Price, op.Quantity, op.side});
+         if (opt_res) stats_inserts++;
+         else if (op.Quantity == 0) stats_zero_qty_rejects++;
+         else if (had_id) stats_duplicate_rejects++;
+     } else if (type == OpType::CANCEL) {
+         bool was_non_front = ref_book.is_non_front(op.id);
+         opt_res = opt_book.cancel(op.id);
+         pool_res = pool_book.cancel(op.id);
+         ref_res = ref_book.cancel(op.id);
+         if (opt_res) {
+             stats_cancels++;
+             if (was_non_front) stats_non_front_cancels++;
+         }
+     } else if (type == OpType::REDUCE) {
+         opt_res = opt_book.reduce(op.id, op.Quantity);
+         pool_res = pool_book.reduce(op.id, op.Quantity);
+         ref_res = ref_book.reduce(op.id, op.Quantity);
+         if (opt_res) stats_reduces++;
+         else stats_rejected_reduces++;
+     } else if (type == OpType::AGGRESSIVE) {
+         bool had_id = ref_book.has_id(op.id);
+         opt_res = opt_book.process_aggressive_order({op.id, op.Price, op.Quantity, op.side}, opt_trades);
+         pool_res = pool_book.process_aggressive_order({op.id, op.Price, op.Quantity, op.side}, pool_trades);
+         ref_res = ref_book.process_aggressive_order({op.id, op.Price, op.Quantity, op.side}, ref_trades);
+         if (opt_res) {
+             stats_aggressive++;
+             stats_trades += opt_trades.size();
+             if (!opt_trades.empty()) {
+                 uint64_t total_traded = 0;
+                 for (const auto& tr : opt_trades) total_traded += tr.Quantity;
+                 uint64_t last_resting_id = (op.side == Side::buy)
+                     ? opt_trades.back().Seller_id
+                     : opt_trades.back().Buyer_id;
+                 if (total_traded < op.Quantity || ref_book.has_id(last_resting_id)) {
+                     stats_partial_fills++;
+                 }
+                 if (opt_trades.size() >= 2 && opt_trades.front().Price != opt_trades.back().Price) {
+                     stats_multi_level_sweeps++;
+                 }
+             }
+         } else if (op.Quantity == 0) {
+             stats_zero_qty_rejects++;
+         } else if (had_id) {
+             stats_duplicate_rejects++;
+         }
+     }
 
-        if (opt_res != ref_res) {
-            std::cerr << "\n[DIVERGENCE] Return values differ on op " << i << "\n";
-            dump_history(history, seed);
-            std::abort();
-        }
+     if (opt_res != ref_res || pool_res != ref_res) {
+         std::cerr << "\n[DIVERGENCE] Return values differ on op " << i << "\n";
+         dump_history(history, seed);
+         std::abort();
+     }
 
-        if (type == OpType::AGGRESSIVE) {
-            if (opt_trades.size() != ref_trades.size()) {
-                std::cerr << "\n[DIVERGENCE] Trade counts differ on op " << i << "\n";
-                dump_history(history, seed);
-                std::abort();
-            }
-            for (size_t t = 0; t < opt_trades.size(); ++t) {
-                if (opt_trades[t].Buyer_id != ref_trades[t].Buyer_id ||
-                    opt_trades[t].Seller_id != ref_trades[t].Seller_id ||
-                    opt_trades[t].Price != ref_trades[t].Price ||
-                    opt_trades[t].Quantity != ref_trades[t].Quantity) {
-                    std::cerr << "\n[DIVERGENCE] Trade properties differ on op " << i << " at index " << t << "\n";
-                    dump_history(history, seed);
-                    std::abort();
-                }
-            }
-        }
+     if (type == OpType::AGGRESSIVE) {
+         if (opt_trades.size() != ref_trades.size() || pool_trades.size() != ref_trades.size()) {
+             std::cerr << "\n[DIVERGENCE] Trade counts differ on op " << i << "\n";
+             dump_history(history, seed);
+             std::abort();
+         }
+         for (size_t t = 0; t < ref_trades.size(); ++t) {
+             if (opt_trades[t].Buyer_id != ref_trades[t].Buyer_id ||
+                 opt_trades[t].Seller_id != ref_trades[t].Seller_id ||
+                 opt_trades[t].Price != ref_trades[t].Price ||
+                 opt_trades[t].Quantity != ref_trades[t].Quantity ||
+                 pool_trades[t].Buyer_id != ref_trades[t].Buyer_id ||
+                 pool_trades[t].Seller_id != ref_trades[t].Seller_id ||
+                 pool_trades[t].Price != ref_trades[t].Price ||
+                 pool_trades[t].Quantity != ref_trades[t].Quantity) {
+                 std::cerr << "\n[DIVERGENCE] Trade properties differ on op " << i << " at index " << t << "\n";
+                 dump_history(history, seed);
+                 std::abort();
+             }
+         }
+     }
 
-        if (num_ops <= 100'000 || (i > 0 && i % 1000 == 0)) {
-            if (opt_book.check_invariants() != InvariantError::none) {
-                std::cerr << "\n[INVARIANT FAILURE] Failed at op " << i << "\n";
-                dump_history(history, seed);
-                std::abort();
-            }
-        }
+     if (num_ops <= 100'000 || (i > 0 && i % 1000 == 0)) {
+         if (opt_book.check_invariants() != InvariantError::none ||
+             pool_book.check_invariants() != InvariantError::none) {
+             std::cerr << "\n[INVARIANT FAILURE] Failed at op " << i << "\n";
+             dump_history(history, seed);
+             std::abort();
+         }
+     }
     }
 
     std::cout << "\n[SUCCESS] " << num_ops << " Operations Fuzzed with Zero Divergence\n";

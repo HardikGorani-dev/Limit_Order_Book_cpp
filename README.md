@@ -1,4 +1,4 @@
-﻿# C++20 Limit Order Book & Matching Engine
+# C++20 Limit Order Book & Matching Engine
 
 [![CI](https://github.com/HardikGorani-dev/Limit_Order_Book_cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/HardikGorani-dev/Limit_Order_Book_cpp/actions/workflows/ci.yml)
 
