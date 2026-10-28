@@ -490,26 +490,58 @@ static BookRunResult execute_single_run(const std::vector<BenchEvent>& stream, d
     return res;
 }
 
-template <typename BookType>
-static BookRunResult benchmark_book_median(const std::string& label, const std::vector<BenchEvent>& stream, double tsc_ghz) {
-    std::cout << "Running " << label << " (1 warm-up + 3 measured runs)...\n";
-    // Warm-up run
-    (void)execute_single_run<BookType>(stream, tsc_ghz);
+struct InterleavedSuiteResult {
+    std::vector<BookRunResult> base_runs;
+    std::vector<BookRunResult> pool_runs;
+    BookRunResult base_median;
+    BookRunResult pool_median;
+    double base_min_mops = 0.0, base_max_mops = 0.0;
+    double pool_min_mops = 0.0, pool_max_mops = 0.0;
+};
 
-    std::vector<BookRunResult> runs;
-    runs.reserve(3);
+static InterleavedSuiteResult run_interleaved_benchmarks(const std::vector<BenchEvent>& stream, double tsc_ghz) {
+    std::cout << "Running Warm-Up Pass (Baseline + PooledOrderBook<16384>)...\n";
+    (void)execute_single_run<Order_book>(stream, tsc_ghz);
+    (void)execute_single_run<PooledOrderBook<16384>>(stream, tsc_ghz);
+
+    InterleavedSuiteResult out{};
+    out.base_runs.reserve(3);
+    out.pool_runs.reserve(3);
+
+    std::cout << "Running 3 Interleaved Trials (Baseline <-> PooledOrderBook<16384>)...\n";
     for (int r = 0; r < 3; ++r) {
-        runs.push_back(execute_single_run<BookType>(stream, tsc_ghz));
-        std::cout << "  Run " << (r + 1) << ": " << std::fixed << std::setprecision(2)
-                  << runs.back().throughput_mops << " M ops/sec (Rested p50="
-                  << runs.back().rested.p50_ns << "ns, p99=" << runs.back().rested.p99_ns << "ns)\n";
+        auto b = execute_single_run<Order_book>(stream, tsc_ghz);
+        auto p = execute_single_run<PooledOrderBook<16384>>(stream, tsc_ghz);
+
+        std::cout << "  Trial " << (r + 1) << " | Baseline: " << std::fixed << std::setprecision(2)
+                  << b.throughput_mops << " M ops/sec (Rested p50=" << b.rested.p50_ns
+                  << "ns, p99=" << b.rested.p99_ns << "ns)  <->  Pooled: "
+                  << p.throughput_mops << " M ops/sec (Rested p50=" << p.rested.p50_ns
+                  << "ns, p99=" << p.rested.p99_ns << "ns)\n";
+
+        out.base_runs.push_back(std::move(b));
+        out.pool_runs.push_back(std::move(p));
     }
 
-    // Sort by throughput and select the median run (index 1)
-    std::sort(runs.begin(), runs.end(), [](const BookRunResult& a, const BookRunResult& b) {
-        return a.throughput_mops < b.throughput_mops;
-    });
-    return runs[1];
+    auto sort_by_mops = [](std::vector<BookRunResult> v) {
+        std::sort(v.begin(), v.end(), [](const BookRunResult& a, const BookRunResult& b) {
+            return a.throughput_mops < b.throughput_mops;
+        });
+        return v;
+    };
+
+    auto b_sorted = sort_by_mops(out.base_runs);
+    auto p_sorted = sort_by_mops(out.pool_runs);
+
+    out.base_min_mops = b_sorted.front().throughput_mops;
+    out.base_max_mops = b_sorted.back().throughput_mops;
+    out.base_median = b_sorted[1];
+
+    out.pool_min_mops = p_sorted.front().throughput_mops;
+    out.pool_max_mops = p_sorted.back().throughput_mops;
+    out.pool_median = p_sorted[1];
+
+    return out;
 }
 
 static void print_row(const std::string& name, const CategoryStats& s) {
@@ -522,8 +554,8 @@ static void print_row(const std::string& name, const CategoryStats& s) {
               << std::setw(12) << std::fixed << std::setprecision(2) << s.allocs_per_op << "\n";
 }
 
-static void print_book_table(const std::string& title, const BookRunResult& r) {
-    std::cout << "\n=== " << title << " (Median of 3 Runs, 500000 Ops) ===\n";
+static void print_book_table(const std::string& title, const BookRunResult& r, double min_mops, double max_mops) {
+    std::cout << "\n=== " << title << " (Median of 3 Interleaved Runs, 500000 Ops) ===\n";
     std::cout << std::left << std::setw(16) << "Op Category"
               << std::right << std::setw(9) << "Count"
               << std::setw(10) << "p50(ns)"
@@ -541,7 +573,8 @@ static void print_book_table(const std::string& title, const BookRunResult& r) {
     print_row("Reduce (Miss)", r.reduce_miss);
 
     std::cout << std::string(81, '-') << "\n";
-    std::cout << "Instrumented Throughput: " << std::fixed << std::setprecision(2) << r.throughput_mops << " M ops/sec\n";
+    std::cout << "Instrumented Throughput: " << std::fixed << std::setprecision(2) << r.throughput_mops
+              << " M ops/sec (3-run range: " << min_mops << " - " << max_mops << " M ops/sec)\n";
     std::cout << "Actual Cross %:          " << std::fixed << std::setprecision(1) << r.cross_pct << "% of new orders matched\n";
     std::cout << "Trades / Shares Matched: " << r.total_trades << " trades / " << r.total_shares << " shares\n";
     std::cout << "Depth Trajectory (100k..500k): ";
@@ -569,8 +602,9 @@ int main() {
     verify_stream_prefix(stream, 100'000);
     std::cout << "\n";
 
-    BookRunResult base_res = benchmark_book_median<Order_book>("Baseline Order_book (STL std::list)", stream, tsc_ghz);
-    BookRunResult pool_res = benchmark_book_median<PooledOrderBook<16384>>("PooledOrderBook<16384> (Intrusive Slab Pool)", stream, tsc_ghz);
+    InterleavedSuiteResult suite = run_interleaved_benchmarks(stream, tsc_ghz);
+    const BookRunResult& base_res = suite.base_median;
+    const BookRunResult& pool_res = suite.pool_median;
 
     if (base_res.total_trades != pool_res.total_trades ||
         base_res.total_shares != pool_res.total_shares ||
@@ -579,8 +613,8 @@ int main() {
         return 1;
     }
 
-    print_book_table("Baseline Order_book (STL std::list)", base_res);
-    print_book_table("PooledOrderBook<16384> (Intrusive Slab Pool)", pool_res);
+    print_book_table("Baseline Order_book (STL std::list)", base_res, suite.base_min_mops, suite.base_max_mops);
+    print_book_table("PooledOrderBook<16384> (Intrusive Slab Pool)", pool_res, suite.pool_min_mops, suite.pool_max_mops);
 
     std::cout << "\n=== Exact Cross-Book Equivalence Check (500000 Ops) ===\n";
     std::cout << "Trades Executed: " << base_res.total_trades << " (Baseline) == " << pool_res.total_trades << " (Pooled)\n";

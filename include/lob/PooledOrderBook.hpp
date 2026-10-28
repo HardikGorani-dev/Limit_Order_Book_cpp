@@ -97,8 +97,8 @@ public:
         return true;
     }
 
-    /// @brief Cancels a resting order by ID, unlinks it in O(1), returns its slot to the pool,
-    ///        and removes its price level if empty.
+    /// @brief Cancels a resting order by ID (O(log P) level lookup + O(1) node unlink),
+    ///        returns its slot to the pool, and removes its price level if empty.
     bool cancel(uint64_t order_id) {
         auto idx_it = order_index.find(order_id);
         if (idx_it == order_index.end()) return false;
