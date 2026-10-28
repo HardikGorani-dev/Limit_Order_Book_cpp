@@ -149,9 +149,10 @@ public:
     }
 
     /// @brief Matches an incoming aggressive order in price-time (FIFO) priority up to its limit price.
-    /// @note If the order has an unfilled remainder after matching, it is inserted into the pool.
-    ///       If the pool is already full BEFORE matching starts and the order would rest, we pre-check
-    ///       or return false on exhaustion.
+    /// @note Exhaustion contract: An unfilled remainder can only fail to rest (returning false) when
+    ///       zero trades occurred and the pool was already full. Any trade that leaves an incoming
+    ///       remainder necessarily fully consumed and freed at least one resting order slot,
+    ///       guaranteeing that the remainder's insert() succeeds.
     bool process_aggressive_order(Order order, std::vector<Trade>& out_trade) {
         if (order.Quantity == 0) return false;
         if (order_index.find(order.Order_id) != order_index.end()) return false;
@@ -256,7 +257,9 @@ public:
 
         uint64_t sum = 0;
         uint32_t curr = lvl->head;
-        while (curr != INVALID_HANDLE) {
+        const size_t max_steps = node_pool.live_count();
+        size_t steps = 0;
+        while (curr != INVALID_HANDLE && steps++ <= max_steps) {
             const PooledNode* node = node_pool.at(curr);
             sum += node->order.Quantity;
             curr = node->next;
@@ -285,6 +288,9 @@ public:
                 while (curr_h != INVALID_HANDLE) {
                     if (curr_h >= PoolCapacity) {
                         return InvariantError::link_mismatch;
+                    }
+                    if (++counted_orders > node_pool.live_count()) {
+                        return InvariantError::link_mismatch; 
                     }
                     const PooledNode* node = node_pool.at(curr_h);
 
@@ -316,7 +322,6 @@ public:
                         return InvariantError::iterator_mismatch;
                     }
 
-                    ++counted_orders;
                     prev_h = curr_h;
                     curr_h = node->next;
                 }

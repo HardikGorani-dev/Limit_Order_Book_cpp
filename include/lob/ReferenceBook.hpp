@@ -112,6 +112,9 @@ public:
         }
         return false;
     }
+    size_t resting_order_count() const { 
+        return active_orders.size();
+     }
 
     uint64_t id_at(size_t index) const { return active_orders[index].id; }
 

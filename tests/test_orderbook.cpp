@@ -271,18 +271,59 @@ TYPED_TEST(OrderBookTest, Cancel_MiddleOrder) {
     EXPECT_EQ(this->trades[1].Seller_id, 3);
 }
 
-TEST(PooledOrderBookExhaustionTest, ReturnsFalseWhenPoolExhaustedAndRecoversAfterCancel) {
+TEST(OrderBookTestNonTyped, Cancel_RemovesEmptyBidPriceLevel) {
+    Order_book book;
+    EXPECT_TRUE(book.insert({1, 100, 10, Side::buy}));
+    EXPECT_TRUE(book.insert({2, 99, 20, Side::buy}));
+    ASSERT_EQ(book.best_bid(), 100ULL);
+
+    EXPECT_TRUE(book.cancel(1));
+    EXPECT_EQ(book.best_bid(), 99ULL);
+    EXPECT_EQ(book.total_quantity(Side::buy, 100), 0ULL);
+
+    EXPECT_TRUE(book.cancel(2));
+    EXPECT_EQ(book.best_bid(), std::nullopt);
+}
+
+TEST(PooledOrderBookTestNonTyped, Cancel_RemovesEmptyBidPriceLevel) {
+    PooledOrderBook<4096> book;
+    EXPECT_TRUE(book.insert({1, 100, 10, Side::buy}));
+    EXPECT_TRUE(book.insert({2, 99, 20, Side::buy}));
+    ASSERT_EQ(book.best_bid(), 100ULL);
+
+    EXPECT_TRUE(book.cancel(1));
+    EXPECT_EQ(book.best_bid(), 99ULL);
+    EXPECT_EQ(book.total_quantity(Side::buy, 100), 0ULL);
+
+    EXPECT_TRUE(book.cancel(2));
+    EXPECT_EQ(book.best_bid(), std::nullopt);
+}
+TEST(PooledOrderBookExhaustionTest, ReturnsFalseWhenPoolExhaustedAndRecoversAfterCancelOrTrade) {
     PooledOrderBook<3> book;
     EXPECT_TRUE(book.insert({1, 100, 10, Side::buy}));
     EXPECT_TRUE(book.insert({2, 100, 20, Side::buy}));
-    EXPECT_TRUE(book.insert({3, 101, 30, Side::sell}));
+    EXPECT_TRUE(book.insert({3, 105, 15, Side::sell}));
 
-    // Pool of capacity 3 is now full; 4th passive insert must return false
+    // Pool of capacity 3 is full: passive insert must return false
     EXPECT_FALSE(book.insert({4, 100, 15, Side::buy}));
+
+    // Non-crossing aggressive order on a full pool (0 trades) cannot rest -> returns false
+    std::vector<Trade> trades;
+    EXPECT_FALSE(book.process_aggressive_order({5, 101, 25, Side::buy}, trades));
+    EXPECT_TRUE(trades.empty());
     EXPECT_EQ(book.check_invariants(), InvariantError::none);
 
-    // Cancel one order to free a slot, then verify insert succeeds
+    // Crossing aggressive order on a full pool that consumes order #3 (qty 15 at 105)
+    // frees slot #3 during the trade, so its 10-share remainder rests at 105
+    EXPECT_TRUE(book.process_aggressive_order({6, 105, 25, Side::buy}, trades));
+    ASSERT_EQ(trades.size(), 1u);
+    EXPECT_EQ(trades[0].Quantity, 15u);
+    EXPECT_TRUE(book.contains(6));
+    EXPECT_EQ(book.remaining_qty(6), 10u);
+    EXPECT_EQ(book.check_invariants(), InvariantError::none);
+
+    // Cancel order #2 to free a slot, then verify passive insert succeeds
     EXPECT_TRUE(book.cancel(2));
-    EXPECT_TRUE(book.insert({4, 100, 15, Side::buy}));
+    EXPECT_TRUE(book.insert({7, 99, 15, Side::buy}));
     EXPECT_EQ(book.check_invariants(), InvariantError::none);
 }
